@@ -22,6 +22,7 @@ typedef struct {
 		MOVE_CURSOR,
 		JUMP_CURSOR,
 		ADD_LETTER,
+		SOLVE_CAESAR,
 	} act_type;
 
 	union {
@@ -84,6 +85,32 @@ printmsg(const char* msg)
 	printw("%s", msg);
 }
 
+char
+rot(char c, uint8_t shift)
+{
+	return (((c - 'A') + shift) % 26) + 'A';
+}
+
+void
+solve_caesar(uint32_t stext_idx)
+{
+	if (stext[stext_idx] == ' ') {
+		return;
+	}
+	int8_t shift = ctext[stext_idx] - toupper(stext[stext_idx]);
+	if (shift < 0) {
+		shift = 26 + shift;
+	}
+	shift = 26 - shift;
+	uint32_t len = strlen(ctext);
+
+	for (uint32_t i = 0; i < len; ++i) {
+		if (isalpha(ctext[i])) {
+			stext[i] = rot(ctext[i], (uint8_t)shift);
+		}
+	}
+}
+
 void
 sighandler(int sig)
 {
@@ -92,6 +119,7 @@ sighandler(int sig)
 
 	switch (sig) {
 	case SIGWINCH:
+		/* Handle screen resize */
 		ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws);
 		if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) >= 0) {
 			resizeterm(ws.ws_row, ws.ws_col);
@@ -101,6 +129,7 @@ sighandler(int sig)
 		signal(SIGWINCH, sighandler);
 		break;
 	case SIGINT:
+		/* Handle exit (^C) */
 		finish(0);
 		break;
 	}
@@ -149,6 +178,9 @@ get_next_space(const char* ctext, uint32_t len, uint32_t pos)
 }
 
 /*
+ * Return a copy of the input ctext, but with words wrapped at rowlen chars
+ * by replacing spaces with newlines.
+ *
  * mtext -must- be at least as long as ctext
  */
 static void
@@ -198,7 +230,7 @@ display(action_t* action)
 
 	old_cursor_pos = cursor_pos;
 
-	/* Process the action */
+	/* First, process the action */
 	switch (action->act_type) {
 	case NONE:
 		break;
@@ -292,7 +324,6 @@ display(action_t* action)
 		char pointer = ctext[cursor_pos];
 
 		/* Mark all letters, displaying a message if we find a conflict */
-
 		for (uint32_t i = 0; i < tlen; ++i) {
 			if (action->u.letter != ' ' && stext[i] == action->u.letter && ctext[i] != pointer) {
 				stext[i] = ' ';
@@ -304,8 +335,12 @@ display(action_t* action)
 		}
 	}
 		break;
+	case SOLVE_CAESAR:
+		solve_caesar(cursor_pos);
+		break;
 	}
 
+	/* Do the actual displaying */
 	crow = rowspace;
 	ccol = pad;
 	for (uint32_t i = 0; i < tlen; ++i) {
@@ -447,7 +482,7 @@ main(int argc, char** argv)
 	}
 
 	move(19, 0);
-	printw("ESC twice exits.");
+	printw("ESC twice exits. F2 solves Caesar cypher with currently highlighted letter.");
 	while (true) {
 		display(&act);
 		refresh();
@@ -486,6 +521,9 @@ main(int argc, char** argv)
 		case ' ':
 			act.act_type = ADD_LETTER;
 			act.u.letter = ' ';
+			break;
+		case KEY_F(2):
+			act.act_type = SOLVE_CAESAR;
 			break;
 		default:
 			if (isalnum(c)) {
