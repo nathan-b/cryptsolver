@@ -40,11 +40,20 @@ typedef struct {
 	} u;
 } action_t;
 
+typedef struct
+{
+	char letter;
+	uint32_t count;
+} freq_entry_t;
+
 #define KEY_ESC 27
 
 #define CP_WHITE   1
 #define CP_RED     2
 #define CP_MAGENTA 3
+
+#define CURSOR_MOUSE UINT32_MAX
+#define CURSOR_SET(_c) ((_c) < CURSOR_MOUSE)
 
 const uint32_t pad = 10;
 const uint32_t rowspace = 3;
@@ -52,6 +61,7 @@ const uint32_t rowspace = 3;
 static void display(action_t* action);
 static int finish(int rc);
 static void clear_screen(void);
+static void get_frequency(freq_entry_t* freq, uint32_t num);
 
 char* ctext = "yjcv ku vjg pcog qh vjg uauvgo wugf da jco qrgtcvqtu vq ocmg htgg rjqpg ecnnu";
 char* stext;
@@ -91,7 +101,12 @@ rot(char c, uint8_t shift)
 	return (((c - 'A') + shift) % 26) + 'A';
 }
 
-void
+/**
+ * Generate a shift by looking at the letter the cursor is currently
+ * on and then solve the rest of the cryptogram as a Caesar cipher
+ * using that shift.
+ */
+static void
 solve_caesar(uint32_t stext_idx)
 {
 	if (stext[stext_idx] == ' ') {
@@ -109,6 +124,46 @@ solve_caesar(uint32_t stext_idx)
 			stext[i] = rot(ctext[i], (uint8_t)shift);
 		}
 	}
+}
+
+static void
+insert(freq_entry_t* arr, uint32_t num, freq_entry_t item)
+{
+	uint32_t pos = 0;
+	while (pos < num && item.count <= arr[pos].count) {
+		++pos;
+	}
+	while (pos < num) {
+		freq_entry_t f = arr[pos];
+		arr[pos] = item;
+		item = f;
+		++pos;
+	}
+}
+
+/**
+ * Build a frequency table for letters in the ciphertext
+ */
+static void
+get_frequency(freq_entry_t* freq, uint32_t num)
+{
+	int32_t freq_internal[26] = {0};
+	uint32_t tlen = strlen(ctext);
+	freq_entry_t ins;
+
+	memset(freq, 0, num * sizeof(*freq));
+
+	for (uint32_t i = 0; i < tlen; ++i) {
+		if (ctext[i] >= 'A' && ctext[i] <= 'Z')	{
+			++freq_internal[ctext[i] - 'A'];
+		}
+	}
+	for (uint32_t i = 0; i < 26; ++i) {
+		ins.letter ='A' + i;
+		ins.count = freq_internal[i];
+		insert(freq, num, ins);
+	}
+
 }
 
 void
@@ -164,6 +219,10 @@ clear_screen(void)
 	}
 }
 
+/**
+ * Find the space closest after the cursor's current position (or
+ * the end of the cipher if no remaining spaces).
+ */
 uint32_t
 get_next_space(const char* ctext, uint32_t len, uint32_t pos)
 {
@@ -209,9 +268,9 @@ get_row_markers(const char* ctext, uint32_t rowlen, char* mtext)
 	}
 }
 
-#define CURSOR_MOUSE UINT32_MAX
-#define CURSOR_SET(_c) ((_c) < CURSOR_MOUSE)
-
+/**
+ * Main function. Handle action, then update the screen.
+ */
 static void
 display(action_t* action)
 {
@@ -385,6 +444,26 @@ display(action_t* action)
 		assert(ccol <= mcol - pad);
 	}
 
+	/* Print the frequency chart */
+	{
+		uint32_t freqy = 17;
+		uint32_t freqx = mcol - (10 + pad);
+		uint32_t num_f = mrow - freqy - 2;
+		if (num_f > 26) num_f = 26;
+		if (freqy - 2 > mrow) num_f = 0;
+
+		freq_entry_t freqs[num_f];
+		get_frequency(freqs, num_f);
+		for (uint32_t i = 0; i < num_f; ++i) {
+			move(freqy + i, freqx);
+			printw("%c: %u", freqs[i].letter, freqs[i].count);
+		}
+	}
+
+	/* Print help text */
+	move(mrow - 8, 1);
+	printw("ESC twice exits. F2 solves Caesar cypher with currently highlighted letter.");
+
 	if (!CURSOR_SET(cursor_pos)) {
 		/* User clicked somewhere invalid, now have to redraw everything */
 		action->act_type = NONE;
@@ -481,8 +560,6 @@ main(int argc, char** argv)
 		style_punct = A_DIM;
 	}
 
-	move(19, 0);
-	printw("ESC twice exits. F2 solves Caesar cypher with currently highlighted letter.");
 	while (true) {
 		display(&act);
 		refresh();
